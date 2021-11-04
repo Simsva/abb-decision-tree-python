@@ -1,34 +1,8 @@
 #!/usr/bin/env python3
 
+import sys
 import json
 import time
-
-class Question:
-  def __init__(self, field, val):
-    self.field = field
-    self.val = val
-
-  def ask(self, data_point):
-    """Compare field from data_point to internal value"""
-
-    val = data_point[self.field]
-
-    if isinstance(val, int) or isinstance(val, float):
-      return val >= self.val
-    else:
-      return val == self.val
-
-  def partition(self, data):
-    """Split data according to question"""
-
-    t, f = [], []
-    for point in data:
-      if self.ask(point):
-        t.append(point)
-      else:
-        f.append(point)
-
-    return t, f
 
 def question(field, val):
   return {"field": field, "val": val}
@@ -56,8 +30,7 @@ def count_label(data, label_field):
   for x in data:
     if x[label_field] not in count:
       count[x[label_field]] = 0
-    else:
-      count[x[label_field]] += 1
+    count[x[label_field]] += 1
 
   return count
 
@@ -116,7 +89,7 @@ def calculate_best_partition(data, label_field, log=False, log_spacing=50, log_p
 def build_tree(data, label_field, log=False, level=0):
   pad = "{pad}{level} ".format(pad=' '*level, level=level)
 
-  gain, q = calculate_best_partition(data, label_field, log_pad=pad)
+  gain, q = calculate_best_partition(data, label_field, log=log, log_pad=pad)
   if log: print(pad+"Question done")
 
   if gain == 0:
@@ -125,8 +98,8 @@ def build_tree(data, label_field, log=False, level=0):
     return count_label(data, label_field)
 
   t, f = partition(q, data)
-  t_branch = build_tree(t, label_field, level=level+1)
-  f_branch = build_tree(f, label_field, level=level+1)
+  t_branch = build_tree(t, label_field, log=log, level=level+1)
+  f_branch = build_tree(f, label_field, log=log, level=level+1)
 
   if log: print(pad+"Branch done")
   return {"q": q, "t": t_branch, "f": f_branch}
@@ -154,27 +127,141 @@ def guess(data_point, node):
   else:
     return node
 
-def main():
-  data = []
+def guess_probability(guess):
+  total = sum(guess.values())
+  probs = dict()
+  for label in guess.keys():
+    probs[label] = guess[label] / total
+  return probs
+
+def parse_data(step):
   with open("data.json", 'r') as f:
     data_raw = json.loads(f.read())
     # TODO: Interpolate co2
-    data = [ {
+    return [ {
       # Strip microseconds and return only hours
       "time_interval": time.strptime(x["time"][:19], "%Y-%m-%d %H:%M:%S").tm_hour,
       "volume": int(x["volume"]),
       "light": int(x["light"]),
       "temp": float(x["temp"]),
       "humidity": float(x["humidity"]),
-    } for x in data_raw[::50] ]
+    } for x in data_raw[::step] ]
 
-  # Field in data to make a decision tree to find
-  label = "time_interval"
+def get_input(prompt, type_fn, default=None):
+  if default == None:
+    prompt = f"({type_fn.__name__}) {prompt} > "
+  else:
+    prompt = f"({type_fn.__name__}) ({default}) {prompt} > "
 
-  # gain, q = calculate_best_partition(data, label)
-  # print(f"{q.field} >= {q.val} ({gain*100:.2f}%)")
-  tree = build_tree(data, label)
-  print_tree(tree)
+  while True:
+    try:
+      inp = input(prompt)
+      if default != None and inp == "":
+        return default
+      else:
+        return type_fn(inp)
+    except ValueError:
+      sys.stderr.write(f"Expected type '{type_fn}'\n")
+
+def yes_no(prompt, default=False):
+  prompt = "({d}) {prompt}? ".format(prompt=prompt, d="Y/n" if default else "y/N")
+
+  while True:
+    inp = input(prompt).lower()
+    if inp == "":
+      return default
+    elif inp == "n" or inp == "no":
+      return False
+    elif inp == "y" or inp == "yes":
+      return True
+    else:
+      sys.stderr.write("Expected yes or no\n")
+
+def cli():
+  data = []
+  label = ""
+  tree = None
+
+  while True:
+    oper = input("> ").lower()
+
+    if oper == "":
+      continue
+    elif oper == "h":
+      # Help
+      print("Imagine needing help")
+
+    elif oper == "l":
+      # Set label
+      if data:
+        while True:
+          label = input("label > ")
+          if not label in data[0]:
+            sys.stderr.write("Label not in data\n")
+          else:
+            break
+      else:
+        label = input("label > ")
+
+    # Data operations
+    elif oper == "db":
+      # Build
+      step = get_input("step", int, default=100)
+
+      data = parse_data(step)
+    elif oper == "dp":
+      # Print
+      print(data)
+
+    # Tree operations
+    elif oper == "tb":
+      # Build
+      try:
+        if label in data[0]:
+          log = yes_no("log")
+          tree = build_tree(data, label, log=log)
+        else:
+          sys.stderr.write("Label not in data\n")
+      except IndexError:
+        sys.stderr.write("No data\n")
+      except KeyboardInterrupt:
+        print("Stopped building tree")
+    elif oper == "tp":
+      # Print
+      if tree:
+        print_tree(tree)
+      else:
+        sys.stderr.write("No tree to print\n")
+    elif oper == "ts":
+      # Save
+      if tree:
+        with open("tree.json", 'w') as f:
+          f.write(json.dumps(tree))
+          print("Done!")
+      else:
+        sys.stderr.write("No tree to save\n")
+    elif oper == "tl":
+      # Load
+      with open("tree.json", 'r') as f:
+        try:
+          tree = json.loads(f.read())
+          print("Done!")
+        except json.JSONDecodeError:
+          sys.stderr.write("Failed to decode JSON\n")
+    elif oper == "tg":
+      # Guess
+      if tree and data:
+        data_point = dict()
+        for k, v in data[0].items():
+          if k != label:
+            data_point[k] = get_input(k, type(v), default=v)
+
+        probs = guess_probability(guess(data_point, tree))
+        print('\n'.join([ f"{k}: {v*100:.2f}%" for k,v in probs.items() ]))
+      else:
+        sys.stderr.write("No tree or data\n")
+    else:
+      sys.stderr("No such operation\n")
 
 if __name__ == '__main__':
-  main()
+  cli()
