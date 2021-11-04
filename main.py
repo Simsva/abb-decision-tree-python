@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
+import os, sys
 import json
 import time
 
@@ -134,18 +134,23 @@ def guess_probability(guess):
     probs[label] = guess[label] / total
   return probs
 
-def parse_data(step):
-  with open("data.json", 'r') as f:
-    data_raw = json.loads(f.read())
-    # TODO: Interpolate co2
-    return [ {
-      # Strip microseconds and return only hours
-      "time_interval": time.strptime(x["time"][:19], "%Y-%m-%d %H:%M:%S").tm_hour,
-      "volume": int(x["volume"]),
-      "light": int(x["light"]),
-      "temp": float(x["temp"]),
-      "humidity": float(x["humidity"]),
-    } for x in data_raw[::step] ]
+def parse_data(filename, step=50):
+  try:
+    with open("data.json", 'r') as f:
+      data_raw = json.loads(f.read())
+      # TODO: Interpolate co2
+      return [ {
+        # Strip microseconds and return only hours
+        "time_interval": time.strptime(x["time"][:19], "%Y-%m-%d %H:%M:%S").tm_hour,
+        "volume": int(x["volume"]),
+        "light": int(x["light"]),
+        "temp": float(x["temp"]),
+        "humidity": float(x["humidity"]),
+      } for x in data_raw[::step] ]
+  except json.JSONDecodeError:
+    sys.stderr.write("Malformed JSON\n")
+  except IOError:
+    sys.stderr.write("Error while reading file\n")
 
 def get_input(prompt, type_fn, default=None):
   if default == None:
@@ -178,20 +183,44 @@ def yes_no(prompt, default=False):
       sys.stderr.write("Expected yes or no\n")
 
 def cli():
+  header = """\
+Decision tree generator"""
+
+  oper_help = """\
+Common:
+  q  | Quit
+  h  | Print this help message
+
+Data:
+  dl | Load data from file
+  dp | Print data
+  dL | Set label (field in data)
+
+Tree:
+  tb | Build tree from data
+  tl | Load tree from file
+  ts | Save tree to file
+  tp | Print tree"""
+
   data = []
   label = ""
   tree = None
 
+  print(header)
   while True:
-    oper = input("> ").lower()
+    oper = input("> ")
 
     if oper == "":
       continue
+    if oper == "q":
+      os.exit()
+
     elif oper == "h":
       # Help
-      print("Imagine needing help")
+      print(oper_help)
 
-    elif oper == "l":
+    # Data operations
+    elif oper == "dL":
       # Set label
       if data:
         while True:
@@ -202,13 +231,12 @@ def cli():
             break
       else:
         label = input("label > ")
-
-    # Data operations
-    elif oper == "db":
-      # Build
+    elif oper == "dl":
+      # Load
+      filename = get_input("file", str, default="data.json")
       step = get_input("step", int, default=100)
 
-      data = parse_data(step)
+      data = parse_data(filename, step=step)
     elif oper == "dp":
       # Print
       print(data)
@@ -235,19 +263,28 @@ def cli():
     elif oper == "ts":
       # Save
       if tree:
-        with open("tree.json", 'w') as f:
-          f.write(json.dumps(tree))
-          print("Done!")
+        filename = get_input("file", str, default="tree.json")
+
+        try:
+          with open(filename, 'w') as f:
+            f.write(json.dumps(tree))
+            print("Done!")
+        except IOError:
+          sys.stderr.write("Error while writing file\n")
       else:
         sys.stderr.write("No tree to save\n")
     elif oper == "tl":
       # Load
-      with open("tree.json", 'r') as f:
-        try:
+      filename = get_input("file", str, default="tree.json")
+
+      try:
+        with open(filename, 'r') as f:
           tree = json.loads(f.read())
           print("Done!")
-        except json.JSONDecodeError:
-          sys.stderr.write("Failed to decode JSON\n")
+      except json.JSONDecodeError:
+        sys.stderr.write("Malformed JSON\n")
+      except IOError:
+        sys.stderr.write("Error while reading file\n")
     elif oper == "tg":
       # Guess
       if tree and data:
@@ -261,7 +298,7 @@ def cli():
       else:
         sys.stderr.write("No tree or data\n")
     else:
-      sys.stderr("No such operation\n")
+      sys.stderr.write("No such operation\n")
 
 if __name__ == '__main__':
   cli()
