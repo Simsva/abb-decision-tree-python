@@ -151,6 +151,14 @@ def cmd_tree_guess(state, args):
     return 1
   return 0
 
+def get_prompt(state):
+  """Returns a prompt based on state"""
+
+  if state["label"] != "":
+    return f"({state['label']})> "
+  else:
+    return "> "
+
 def main():
   header = "Decision tree generator"
 
@@ -207,7 +215,11 @@ def main():
     "label": '',
     "tree": None,
   }
-  interface = cli.CLI(state)
+  interface = cli.CLI(
+    state=state,
+    prompt=get_prompt,
+    case_insensitive=False,
+  )
 
   for cmd in commands:
     interface.register_command(cli.Command(**cmd))

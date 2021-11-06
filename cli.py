@@ -4,6 +4,9 @@ import sys
 from typing import List
 from collections.abc import Callable
 
+class CLIError(Exception):
+  pass
+
 class Command:
   """Command class for use in CLI"""
 
@@ -34,7 +37,8 @@ class CLI:
       "command_not_found": "No such command '{command}'\n",
       "command_error": "An error occured while running '{command}'\n",
       "command_invalid_status_code": "'{command}' returned a non-integer status code\n",
-      "command_status_code": "'{command}' exited with status code '{status}'\n"
+      "command_status_code": "'{command}' exited with status code '{status}'\n",
+      "prompt_invalid": "Invalid prompt supplied\n",
     }
 
   def set_quit_aliases(self, aliases: List[str]) -> None:
@@ -87,13 +91,32 @@ class CLI:
         usage=cmd.usage,
       ))
 
+  def __get_prompt(self) -> str:
+    """Return the current command prompt"""
+
+    try:
+      if callable(self.__prompt):
+        return self.__prompt(self.__state)
+      elif isinstance(self.__prompt, str):
+        return self.__prompt.format(**self.__state)
+    except TypeError:
+      # Supress TypeErrors (when __call__ does not take arguments)
+      pass
+
+    return None
+
   def run(self) -> None:
     self.__generate_command_maps()
 
     while True:
       try:
-        args = input(self.__prompt).split()
-        cmd_name = args[0]
+        prompt = self.__get_prompt()
+        if not isinstance(prompt, str):
+          raise CLIError(self.messages["prompt_invalid"])
+
+        # TODO: History (curses?)
+        args = input(prompt).split()
+        cmd_name = args[0].lower() if self.__case_insensitive else args[0]
       except EOFError:
         print(self.__quit_aliases[0])
         return
@@ -110,7 +133,7 @@ class CLI:
 
         try:
           response = cmd.function(state=self.__state, args=args)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
           sys.stderr.write("Stopped execution of command\n")
           continue
         except Exception as e:
