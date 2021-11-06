@@ -4,137 +4,12 @@ import os, sys
 import json
 import time
 
-def question(field, val):
-  return {"field": field, "val": val}
-
-def ask(q, data_point):
-  val = data_point[q["field"]]
-
-  if isinstance(val, int) or isinstance(val, float):
-    return val >= q["val"]
-  else:
-    return val == q["val"]
-
-def partition(q, data):
-  t, f = [], []
-  for point in data:
-    if ask(q, point):
-      t.append(point)
-    else:
-      f.append(point)
-
-  return t, f
-
-def count_label(data, label_field):
-  count = dict()
-  for x in data:
-    if x[label_field] not in count:
-      count[x[label_field]] = 0
-    count[x[label_field]] += 1
-
-  return count
-
-def gini(data, label_field):
-  """Calculate chance of guessing the wrong label"""
-
-  data_len = len(data)
-
-  label_count = count_label(data, label_field)
-
-  impurity = 1
-  for label in label_count:
-    probability = label_count[label] / data_len
-    impurity -= probability**2
-
-  return impurity
-
-def info_gain(t, f, uncertainty, label_field):
-  """Calculate loss of uncertainty (gain of information) after partitioning"""
-
-  p = len(t) / (len(t) + len(f))
-  return uncertainty - p*gini(t, label_field) - (1-p)*gini(f, label_field)
-
-def calculate_best_partition(data, label_field, log=False, log_spacing=50, log_pad=''):
-  """Find best question to ask"""
-
-  best_gain = 0
-  best_q = None
-  uncertainty = gini(data, label_field)
-
-  # All possible fields
-  fields = [ x for x in data[0] if x != label_field ]
-
-  # Calculate amount of iterations
-  unique = dict([ (field, set([ x[field] for x in data ])) for field in fields ])
-  count = sum([ len(x) for x in unique.values() ])
-  i = 0
-
-  for field in fields:
-    for val in unique[field]:
-      if log and ((i := i+1) % 50 == 1 or i == count):
-        print(log_pad+"Question: {}/{}".format(i, count))
-      q = question(field, val)
-      t, f = partition(q, data)
-
-      # Basic optimization, do not continue if the data is not partitioned
-      if len(t) == 0 or len(f) == 0: continue
-
-      gain = info_gain(t, f, uncertainty, label_field)
-      if gain > best_gain:
-        best_gain = gain
-        best_q = q
-
-  return best_gain, best_q
-
-def build_tree(data, label_field, log=False, level=0):
-  pad = "{pad}{level} ".format(pad=' '*level, level=level)
-
-  gain, q = calculate_best_partition(data, label_field, log=log, log_pad=pad)
-  if log: print(pad+"Question done")
-
-  if gain == 0:
-    if log: print(pad+"End node")
-    # return data
-    return count_label(data, label_field)
-
-  t, f = partition(q, data)
-  t_branch = build_tree(t, label_field, log=log, level=level+1)
-  f_branch = build_tree(f, label_field, log=log, level=level+1)
-
-  if log: print(pad+"Branch done")
-  return {"q": q, "t": t_branch, "f": f_branch}
-
-def print_tree(node, level=0):
-  pad = "{pad}{level} ".format(pad="  "*level, level=level)
-
-  if 'q' in node:
-    print(pad+"{field} >= {val}".format(**node['q']))
-
-    print(pad+"--> True:")
-    print_tree(node['t'], level=level+1)
-
-    print(pad+"--> False:")
-    print_tree(node['f'], level=level+1)
-  else:
-    print(pad+"Predict", str(node))
-
-def guess(data_point, node):
-  if 'q' in node:
-    if ask(node['q'], data_point):
-      return guess(data_point, node['t'])
-    else:
-      return guess(data_point, node['f'])
-  else:
-    return node
-
-def guess_probability(guess):
-  total = sum(guess.values())
-  probs = dict()
-  for label in guess.keys():
-    probs[label] = guess[label] / total
-  return probs
+import cli
+from decisiontree import *
 
 def parse_data(filename, step=50):
+  """Parse data in the format given by https://api.simsva.se/aidb/get_data/"""
+
   try:
     with open("data.json", 'r') as f:
       data_raw = json.loads(f.read())
@@ -153,6 +28,8 @@ def parse_data(filename, step=50):
     sys.stderr.write("Error while reading file\n")
 
 def get_input(prompt, type_fn, default=None):
+  """Handle user inputs of various data types"""
+
   if default == None:
     prompt = f"({type_fn.__name__}) {prompt} > "
   else:
@@ -169,6 +46,8 @@ def get_input(prompt, type_fn, default=None):
       sys.stderr.write(f"Expected type '{type_fn}'\n")
 
 def yes_no(prompt, default=False):
+  """Ask user a yes or no question"""
+
   prompt = "({d}) {prompt}? ".format(prompt=prompt, d="Y/n" if default else "y/N")
 
   while True:
@@ -182,123 +61,162 @@ def yes_no(prompt, default=False):
     else:
       sys.stderr.write("Expected yes or no\n")
 
-def cli():
-  header = """\
-Decision tree generator"""
+# CLI commands
+def cmd_data_label(state, args):
+  # Set label
+  state["label"] = input("label > ")
+  return 0
 
-  oper_help = """\
-Common:
-  q  | Quit
-  h  | Print this help message
+def cmd_data_load(state, args):
+  # Load data from file
+  filename = get_input("file", str, default="data.json")
+  step = get_input("step", int, default=100)
 
-Data:
-  dl | Load data from file
-  dp | Print data
-  dL | Set label (field in data)
+  state["data"] = parse_data(filename, step=step)
+  return 0
 
-Tree:
-  tb | Build tree from data
-  tl | Load tree from file
-  ts | Save tree to file
-  tp | Print tree"""
+def cmd_data_print(state, args):
+  # Print data
+  print(state["data"])
+  return 0
 
-  data = []
-  label = ""
-  tree = None
+def cmd_tree_build(state, args):
+  # Build tree
+  try:
+    if state["label"] in state["data"][0]:
+      log = yes_no("log")
+      state["tree"] = build_tree(state["data"], label, log=log)
+    else:
+      sys.stderr.write("Label not in data\n")
+      return 1
+  except IndexError:
+    sys.stderr.write("No data\n")
+    return 1
+  return 0
+
+def cmd_tree_print(state, args):
+  # Print tree
+  print_tree(state["tree"])
+  return 0
+
+def cmd_tree_save(state, args):
+  # Save tree to file
+  if state["tree"]:
+    filename = get_input("file", str, default="tree.json")
+
+    try:
+      with open(filename, 'w') as f:
+        f.write(json.dumps(state["tree"]))
+        print("Done!")
+    except IOError:
+      sys.stderr.write("Error while writing file\n")
+      return 1
+  else:
+    sys.stderr.write("No tree to save\n")
+    return 1
+  return 0
+
+def cmd_tree_load(state, args):
+  # Load tree from a file
+  filename = get_input("file", str, default="tree.json")
+
+  try:
+    with open(filename, 'r') as f:
+      state["tree"] = json.loads(f.read())
+      print("Done!")
+  except json.JSONDecodeError:
+    sys.stderr.write("Malformed JSON\n")
+    return 1
+  except IOError:
+    sys.stderr.write("Error while reading file\n")
+    return 1
+  return 0
+
+def cmd_tree_guess(state, args):
+  # Make a guess about a data point according to tree
+  if state["tree"] and state["data"]:
+    if state["label"] in state["data"][0]:
+      data_point = dict()
+      for k, v in state["data"][0].items():
+        if k != state["label"]:
+          data_point[k] = get_input(k, type(v), default=v)
+
+      probs = guess_probability(guess(data_point, state["tree"]))
+      print('\n'.join([ f"{k}: {v*100:.2f}%" for k,v in probs.items() ]))
+    else:
+      sys.stderr.write("Label not in data\n")
+      return 1
+  else:
+    sys.stderr.write("No tree or data\n")
+    return 1
+  return 0
+
+def main():
+  header = "Decision tree generator"
+
+  commands = [
+    {
+      "function": cmd_data_load,
+      "aliases": ["dl", "data_load"],
+      "description": "Load data from a file",
+    },
+    {
+      "function": cmd_data_print,
+      "aliases": ["dp", "data_print"],
+      "description": "Print the data",
+    },
+    {
+      "function": cmd_data_label,
+      "aliases": ["dL", "data_label"],
+      "description": "Set the label (field in data)",
+    },
+    {
+      "function": cmd_tree_build,
+      "aliases": ["tb", "tree_build"],
+      "description": "Build tree from data",
+    },
+    {
+      "function": cmd_tree_load,
+      "aliases": ["tl", "tree_load"],
+      "description": "Load tree from a file",
+    },
+    {
+      "function": cmd_tree_save,
+      "aliases": ["ts", "tree_save"],
+      "description": "Save tree to a file",
+    },
+    {
+      "function": cmd_tree_print,
+      "aliases": ["tp", "tree_print"],
+      "description": "Print tree",
+    },
+    {
+      "function": cmd_tree_guess,
+      "aliases": ["tg", "tree_guess"],
+      "description": "Make a guess about a data point according to tree",
+    },
+    {
+      "function": lambda state, args: 1 if print("{}\n{}".format(state, args)) else 0,
+      "aliases": ["dump"],
+      "description": "Dump state and args",
+    },
+  ]
+
+  state = {
+    "data": [],
+    "label": '',
+    "tree": None,
+  }
+  interface = cli.CLI(state)
+
+  for cmd in commands:
+    interface.register_command(cli.Command(**cmd))
+
+  interface.set_help_aliases(["?", "h", "help"])
+  interface.set_quit_aliases(["q", "quit", "exit"])
 
   print(header)
-  while True:
-    oper = input("> ")
-
-    if oper == "":
-      continue
-    if oper == "q":
-      os.exit()
-
-    elif oper == "h":
-      # Help
-      print(oper_help)
-
-    # Data operations
-    elif oper == "dL":
-      # Set label
-      if data:
-        while True:
-          label = input("label > ")
-          if not label in data[0]:
-            sys.stderr.write("Label not in data\n")
-          else:
-            break
-      else:
-        label = input("label > ")
-    elif oper == "dl":
-      # Load
-      filename = get_input("file", str, default="data.json")
-      step = get_input("step", int, default=100)
-
-      data = parse_data(filename, step=step)
-    elif oper == "dp":
-      # Print
-      print(data)
-
-    # Tree operations
-    elif oper == "tb":
-      # Build
-      try:
-        if label in data[0]:
-          log = yes_no("log")
-          tree = build_tree(data, label, log=log)
-        else:
-          sys.stderr.write("Label not in data\n")
-      except IndexError:
-        sys.stderr.write("No data\n")
-      except KeyboardInterrupt:
-        print("Stopped building tree")
-    elif oper == "tp":
-      # Print
-      if tree:
-        print_tree(tree)
-      else:
-        sys.stderr.write("No tree to print\n")
-    elif oper == "ts":
-      # Save
-      if tree:
-        filename = get_input("file", str, default="tree.json")
-
-        try:
-          with open(filename, 'w') as f:
-            f.write(json.dumps(tree))
-            print("Done!")
-        except IOError:
-          sys.stderr.write("Error while writing file\n")
-      else:
-        sys.stderr.write("No tree to save\n")
-    elif oper == "tl":
-      # Load
-      filename = get_input("file", str, default="tree.json")
-
-      try:
-        with open(filename, 'r') as f:
-          tree = json.loads(f.read())
-          print("Done!")
-      except json.JSONDecodeError:
-        sys.stderr.write("Malformed JSON\n")
-      except IOError:
-        sys.stderr.write("Error while reading file\n")
-    elif oper == "tg":
-      # Guess
-      if tree and data:
-        data_point = dict()
-        for k, v in data[0].items():
-          if k != label:
-            data_point[k] = get_input(k, type(v), default=v)
-
-        probs = guess_probability(guess(data_point, tree))
-        print('\n'.join([ f"{k}: {v*100:.2f}%" for k,v in probs.items() ]))
-      else:
-        sys.stderr.write("No tree or data\n")
-    else:
-      sys.stderr.write("No such operation\n")
+  interface.run()
 
 if __name__ == '__main__':
-  cli()
+  main()
