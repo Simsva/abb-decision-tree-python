@@ -230,5 +230,11 @@ def main():
   print(header)
   interface.run()
 
+  # ch = interface.input(
+  #   prompt="> ",
+  # )
+  # print(len(ch[0]))
+  # print(ch)
+
 if __name__ == '__main__':
   main()
