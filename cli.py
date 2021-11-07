@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 
 import sys
-from typing import List
+from typing import List, TypeVar
 from collections.abc import Callable
-
-class CLIError(Exception):
-  pass
 
 class Command:
   """Command class for use in CLI"""
@@ -16,9 +13,6 @@ class Command:
 
     self.usage = usage
     self.description = description
-
-  def add_alias(self, alias: str) -> None:
-    self.aliases.append(alias)
 
 # _Getch taken from https://stackoverflow.com/a/510364
 class _Getch:
@@ -99,102 +93,142 @@ default_invisible_chars = [
   "\x1b[B",
 ]
 
-def default_cmd_quit(state, args):
-  pass
+def default_cmd_help(inter, state: dict, argv: list) -> int:
+  def print_fmt(cmd):
+    print(inter.help_format.format(
+      aliases='; '.join(cmd.aliases),
+      desc=cmd.description,
+      name=cmd.aliases[0],
+      usage=cmd.usage,
+    ))
 
-def default_cmd_help(state, args):
-  pass
+  if len(argv) < 2:
+    for cmd in inter.commands:
+      print_fmt(cmd)
+  else:
+    try:
+      print_fmt(inter.get_command(argv[1]))
+    except KeyError:
+      sys.stderr.write(inter.messages["command_not_found"].format(command=argv[1]))
+      return 1
+  return 0
 
-def default_cmd_history(state, args):
-  pass
+def default_cmd_quit(inter, state: dict, argv: list) -> int:
+  return -1024
 
+def default_cmd_history(inter, state: dict, argv: list) -> int:
+  count = 15
+  if len(argv) > 1:
+    try:
+      count = int(argv[1])
+      if count < 1:
+        sys.stderr.write(inter.messages["history_negative_count"])
+        return 1
+    except ValueError:
+      sys.stderr.write(inter.messages["history_invalid_count"])
+      return 1
+
+  print('\n'.join([ f"{k+1:3d}  {v}" for k,v in enumerate(inter.history) ][-count-1:-1]))
+  return 0
+
+PromptType = TypeVar("PromptType", str, Callable)
 class CLI:
   """Command-line interface"""
 
   def __init__(self, state: dict,
-               prompt: str="> ",
+               prompt: PromptType="> ",
                case_insensitive: bool=True,
                history_limit:int=1000,
                ):
     self.getch = _Getch()
 
-    self._state = state
-    self._prompt = prompt
-    self._case_insensitive = case_insensitive
-    self._history_limit = history_limit
+    self.state = state
+    self.prompt = prompt
+    self.case_insensitive = case_insensitive
+    self.history_limit = history_limit
 
-    self._commands = []
-    self._commandMaps = None
-    self._quit_aliases = ["q", "quit"]
-    self._help_aliases = ["h", "help"]
+    self.commands = []
+    self._command_maps = []
+    self.help_format = "{aliases} | {desc} | {name} {usage}"
+
+    # Registes built-in commands
+    self.builtin_cmd_ids = {
+      "help": self.register_command(Command(
+        function=default_cmd_help,
+        aliases=["h", "help"],
+        usage="[command]",
+        description="Print this help message",
+      )),
+      "quit": self.register_command(Command(
+        function=default_cmd_quit,
+        aliases=["q", "quit"],
+        description="Quit the program",
+      )),
+      "history": self.register_command(Command(
+        function=default_cmd_history,
+        aliases=["history"],
+        usage="[count=15]",
+        description="Print the command history",
+      )),
+    }
 
     self.messages = {
       "command_not_found": "No such command '{command}'\n",
       "command_error": "An error occured while running '{command}'\n",
       "command_invalid_status_code": "'{command}' returned a non-integer status code\n",
       "command_status_code": "'{command}' exited with status code '{status}'\n",
+      "command_already_registered": "Command was already registered\n",
+      "command_overlapping_alias": "Another command is already using the alias '{alias}'\n",
       "prompt_invalid": "Invalid prompt supplied\n",
       "aliases_invalid": "Invalid aliases supplied\n",
+      "id_out_of_range": "The specified ID is out of range",
+      "history_negative_count": "Cannot print a zero or less history entries\n",
+      "history_invalid_count": "Non-integer count of entries supplied\n",
     }
 
-  def set_quit_aliases(self, aliases: List[str]) -> None:
-    if isinstance(aliases, list):
-      self._quit_aliases = aliases
-    else:
-      raise CLIError(self.messages["aliases_invalid"])
+  def register_command(self, command: Command) -> int:
+    """Add command to CLI and return its ID"""
 
-  def set_help_aliases(self, aliases: List[str]) -> None:
-    if isinstance(aliases, list):
-      self._help_aliases = aliases
+    if command in self.commands:
+      # TODO: Change exception types
+      raise KeyError(self.messages["command_already_registered"])
     else:
-      raise CLIError(self.messages["aliases_invalid"])
+      for alias in command.aliases:
+        if alias in self._command_maps:
+          raise KeyError(self.messages["command_overlapping_alias"].format(alias=alias))
 
-  def register_command(self, command: Command) -> bool:
-    if command in self._commands:
-      return False
+      self.commands.append(command)
+      return len(self.commands)-1
+
+  def unregister_command(self, id: int) -> int:
+    """Remove a command from CLI"""
+
+    if id < len(self.commands):
+      self.commands[id] = None
     else:
-      self._commands.append(command)
-      return True
+      raise IndexError(self.messages["id_out_of_range"])
 
   def _generate_command_maps(self) -> None:
-    self._commandMaps = dict()
-    for index, cmd in enumerate(self._commands):
-      for alias in cmd.aliases:
-        self._commandMaps[alias] = index
+    self._command_maps = dict()
+    for index, cmd in enumerate(self.commands):
+      if cmd != None:
+        for alias in cmd.aliases:
+          self._command_maps[alias] = index
 
-  def print_help(self) -> None:
-    cmd_fmt = "{aliases} | {desc} | {name} {usage}"
+  def get_command(self, alias: str) -> Command:
+    if alias in self._command_maps:
+      return self.commands[self._command_maps[alias]]
+    else:
+      raise KeyError(self.messages["command_not_found"].format(command=alias))
 
-    print(cmd_fmt.format(
-      aliases='; '.join(self._help_aliases),
-      desc="Print this help message",
-      name=self._help_aliases[0],
-      usage="",
-    ))
-
-    print(cmd_fmt.format(
-      aliases='; '.join(self._quit_aliases),
-      desc="Exit the program",
-      name=self._quit_aliases[0],
-      usage="",
-    ))
-
-    for cmd in self._commands:
-      print(cmd_fmt.format(
-        aliases='; '.join(cmd.aliases),
-        desc=cmd.description,
-        name=cmd.aliases[0],
-        usage=cmd.usage,
-      ))
-
-  def _get_prompt(self) -> str:
+  def get_prompt(self) -> str:
     """Return the current command prompt"""
 
     try:
-      if callable(self._prompt):
-        return self._prompt(self._state)
-      elif isinstance(self._prompt, str):
-        return self._prompt.format(**self._state)
+      if callable(self.prompt):
+        return self.prompt(self.state)
+      elif isinstance(self.prompt, str):
+        return self.prompt.format(**self.state)
     except TypeError:
       # Supress TypeErrors (when __call__ does not take arguments)
       pass
@@ -256,101 +290,97 @@ class CLI:
 
   def run(self) -> None:
     import shutil
+    import traceback
 
     self._generate_command_maps()
-    history = []
+    self.history = []
     current_cmd = ""
+    force_quit = False
 
     while True:
-      try:
-        prompt = self._get_prompt()
-        if not isinstance(prompt, str):
-          raise CLIError(self.messages["prompt_invalid"])
+      prompt = self.get_prompt()
+      if not isinstance(prompt, str):
+        raise TypeError(self.messages["prompt_invalid"])
 
-        if len(history) >= self._history_limit:
-          history.pop(0)
-        i = len(history)
-        last = i
-        history.append("")
+      if len(self.history) >= self.history_limit:
+        self.history.pop(0)
+      i = len(self.history)
+      last = i
+      self.history.append("")
 
-        while True:
-          current_cmd, stop = self.input(
-            prompt=prompt,
-            stop_chars=default_stop_chars + ["\x1b[A", "\x1b[B"],
-            # Use history at index i as base
-            base_input=history[i],
-          )
+      while True:
+        current_cmd, stop = self.input(
+          prompt=prompt,
+          stop_chars=default_stop_chars + ["\x1b[A", "\x1b[B"],
+          # Use history at index i as base
+          base_input=self.history[i],
+        )
 
-          # Navigate history with arrow keys
-          w = shutil.get_terminal_size((80, 20)).columns
-          if stop == '\x03':
-            print()
-            current_cmd = ""
+        # Navigate history with arrow keys
+        w = shutil.get_terminal_size((80, 20)).columns
+        if stop == '\x03':
+          print()
+          current_cmd = ""
+          break
+        elif stop == '\x04':
+          if current_cmd == "":
+            # Force quit command on ^D
+            # print(self._quit_aliases[0])
+            # current_cmd = self._quit_aliases[0]
+            force_quit = True
             break
-          elif stop == '\x04':
-            if current_cmd == "":
-              # Force quit command on ^D
-              print(self._quit_aliases[0])
-              current_cmd = self._quit_aliases[0]
-              break
-          elif stop == "\x1b[A":
-            # Up arrow
-            if i > 0:
-              if i == last:
-                # Save history
-                history[last] = current_cmd
-              i -= 1
-              sys.stdout.write('\r' + ' '*w
-                               + '\r')
-              # sys.stdout.flush()
-          elif stop == "\x1b[B":
-            # Down arrow
-            if i < last:
-              i += 1
-              sys.stdout.write('\r' + ' '*w
-                               + '\r')
-              # sys.stdout.flush()
-          else:
-            print()
-            break
-
-        history[len(history)-1] = current_cmd
-        args = current_cmd.split()
-        if len(args) == 0:
-          history.pop()
-          continue
+        elif stop == "\x1b[A":
+          # Up arrow
+          if i > 0:
+            if i == last:
+              # Save history
+              self.history[last] = current_cmd
+            i -= 1
+            sys.stdout.write('\r' + ' '*w
+                              + '\r')
+            # sys.stdout.flush()
+        elif stop == "\x1b[B":
+          # Down arrow
+          if i < last:
+            i += 1
+            sys.stdout.write('\r' + ' '*w
+                              + '\r')
+            # sys.stdout.flush()
         else:
-          cmd_name = args[0].lower() if self._case_insensitive else args[0]
+          print()
+          break
 
-      except EOFError:
-        print(self._quit_aliases[0])
-        return
-      except IndexError:
-        # No command entered
+      if force_quit:
+        print()
+        break
+
+      self.history[len(self.history)-1] = current_cmd
+      args = current_cmd.split()
+      if len(args) == 0:
+        self.history.pop()
         continue
+      else:
+        cmd_name = args[0].lower() if self.case_insensitive else args[0]
 
-      # TODO: Move built-in commands
-      if cmd_name == "history":
-        print('\n'.join([ f"{k+1:3d} {v}" for k,v in enumerate(history) ][-16:-1]))
-      elif cmd_name in self._quit_aliases:
-        return
-      elif cmd_name in self._help_aliases:
-        self.print_help()
-      elif cmd_name in self._commandMaps:
-        cmd = self._commands[self._commandMaps[cmd_name]]
+      if cmd_name in self._command_maps:
+        cmd = self.commands[self._command_maps[cmd_name]]
 
         try:
-          response = cmd.function(state=self._state, args=args)
+          response = cmd.function(self, self.state, args)
         except (KeyboardInterrupt, EOFError):
           sys.stderr.write("Stopped execution of command\n")
           continue
         except Exception as e:
           sys.stderr.write(self.messages["command_error"].format(command=cmd_name))
-          sys.stderr.write(str(e) + '\n')
+          traceback.print_exc(file=sys.stderr)
           continue
 
         if not isinstance(response, int):
           sys.stderr.write(self.messages["command_invalid_status_code"].format(command=cmd_name))
+        elif response == -1024:
+          # Quit CLI
+          print()
+          break
         elif response != 0:
           sys.stderr.write(self.messages["command_status_code"].format(command=cmd_name, status=response))
       else:

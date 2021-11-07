@@ -62,12 +62,12 @@ def yes_no(prompt, default=False):
       sys.stderr.write("Expected yes or no\n")
 
 # CLI commands
-def cmd_data_label(state, args):
+def cmd_data_label(inter, state, argv):
   # Set label
   state["label"] = input("label > ")
   return 0
 
-def cmd_data_load(state, args):
+def cmd_data_load(inter, state, argv):
   # Load data from file
   filename = get_input("file", str, default="data.json")
   step = get_input("step", int, default=100)
@@ -75,12 +75,12 @@ def cmd_data_load(state, args):
   state["data"] = parse_data(filename, step=step)
   return 0
 
-def cmd_data_print(state, args):
+def cmd_data_print(inter, state, argv):
   # Print data
   print(state["data"])
   return 0
 
-def cmd_tree_build(state, args):
+def cmd_tree_build(inter, state, argv):
   # Build tree
   try:
     if state["label"] in state["data"][0]:
@@ -94,12 +94,12 @@ def cmd_tree_build(state, args):
     return 1
   return 0
 
-def cmd_tree_print(state, args):
+def cmd_tree_print(inter, state, argv):
   # Print tree
   print_tree(state["tree"])
   return 0
 
-def cmd_tree_save(state, args):
+def cmd_tree_save(inter, state, argv):
   # Save tree to file
   if state["tree"]:
     filename = get_input("file", str, default="tree.json")
@@ -116,7 +116,7 @@ def cmd_tree_save(state, args):
     return 1
   return 0
 
-def cmd_tree_load(state, args):
+def cmd_tree_load(inter, state, argv):
   # Load tree from a file
   filename = get_input("file", str, default="tree.json")
 
@@ -132,7 +132,7 @@ def cmd_tree_load(state, args):
     return 1
   return 0
 
-def cmd_tree_guess(state, args):
+def cmd_tree_guess(inter, state, argv):
   # Make a guess about a data point according to tree
   if state["tree"] and state["data"]:
     if state["label"] in state["data"][0]:
@@ -155,7 +155,7 @@ def get_prompt(state):
   """Returns a prompt based on state"""
 
   if state["label"] != "":
-    return f"({state['label']})> "
+    return f"({state['label']}) > "
   else:
     return "> "
 
@@ -215,26 +215,17 @@ def main():
     "label": '',
     "tree": None,
   }
-  interface = cli.CLI(
+  inter= cli.CLI(
     state=state,
     prompt=get_prompt,
     case_insensitive=False,
   )
 
   for cmd in commands:
-    interface.register_command(cli.Command(**cmd))
-
-  interface.set_help_aliases(["?", "h", "help"])
-  interface.set_quit_aliases(["q", "quit", "exit"])
+    inter.register_command(cli.Command(**cmd))
 
   print(header)
-  interface.run()
-
-  # ch = interface.input(
-  #   prompt="> ",
-  # )
-  # print(len(ch[0]))
-  # print(ch)
+  inter.run()
 
 if __name__ == '__main__':
   main()
