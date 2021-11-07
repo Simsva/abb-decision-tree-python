@@ -43,7 +43,7 @@ def get_input(prompt, type_fn, default=None):
       else:
         return type_fn(inp)
     except ValueError:
-      sys.stderr.write(f"Expected type '{type_fn}'\n")
+      sys.stderr.write(f"Expected type '{type_fn.__name__}'\n")
 
 def yes_no(prompt, default=False):
   """Ask user a yes or no question"""
@@ -85,7 +85,7 @@ def cmd_tree_build(inter, state, argv):
   try:
     if state["label"] in state["data"][0]:
       log = yes_no("log")
-      state["tree"] = build_tree(state["data"], label, log=log)
+      state["tree"] = build_tree(state["data"], state["label"], log=log)
     else:
       sys.stderr.write("Label not in data\n")
       return 1
@@ -167,46 +167,55 @@ def main():
       "function": cmd_data_load,
       "aliases": ["dl", "data_load"],
       "description": "Load data from a file",
+      "category": "Data",
     },
     {
       "function": cmd_data_print,
       "aliases": ["dp", "data_print"],
       "description": "Print the data",
+      "category": "Data",
     },
     {
       "function": cmd_data_label,
       "aliases": ["dL", "data_label"],
       "description": "Set the label (field in data)",
+      "category": "Data",
     },
     {
       "function": cmd_tree_build,
       "aliases": ["tb", "tree_build"],
       "description": "Build tree from data",
+      "category": "Tree",
     },
     {
       "function": cmd_tree_load,
       "aliases": ["tl", "tree_load"],
       "description": "Load tree from a file",
+      "category": "Tree",
     },
     {
       "function": cmd_tree_save,
       "aliases": ["ts", "tree_save"],
       "description": "Save tree to a file",
+      "category": "Tree",
     },
     {
       "function": cmd_tree_print,
       "aliases": ["tp", "tree_print"],
       "description": "Print tree",
+      "category": "Tree",
     },
     {
       "function": cmd_tree_guess,
       "aliases": ["tg", "tree_guess"],
       "description": "Make a guess about a data point according to tree",
+      "category": "Tree",
     },
     {
       "function": lambda state, args: 1 if print("{}\n{}".format(state, args)) else 0,
       "aliases": ["dump"],
       "description": "Dump state and args",
+      "category": "Debug",
     },
   ]
 

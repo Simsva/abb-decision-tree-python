@@ -7,12 +7,19 @@ from collections.abc import Callable
 class Command:
   """Command class for use in CLI"""
 
-  def __init__(self, function: Callable[[dict, List[str]], int], aliases: List[str], usage: str="", description: str=""):
+  def __init__(self,
+               function: Callable[[dict, List[str]], int],
+               aliases: List[str],
+               usage: str="",
+               description: str="",
+               category: str="Default"
+               ):
     self.function = function
     self.aliases = aliases
 
     self.usage = usage
     self.description = description
+    self.category = category
 
 # _Getch taken from https://stackoverflow.com/a/510364
 class _Getch:
@@ -94,20 +101,38 @@ default_invisible_chars = [
 ]
 
 def default_cmd_help(inter, state: dict, argv: list) -> int:
-  def print_fmt(cmd):
-    print(inter.help_format.format(
+  def max_width(cmds):
+    out = 0
+    for cmd in cmds:
+      width = sum([ len(x)+2 for x in cmd.aliases ])
+      out = width if width > out else out
+
+    return out
+
+  def print_fmt(cmd, alias_width, fmt=inter.help_format_short):
+    print(fmt.format(
       aliases='; '.join(cmd.aliases),
+      alias_width=alias_width,
       desc=cmd.description,
       name=cmd.aliases[0],
       usage=cmd.usage,
+      category=cmd.category,
     ))
 
   if len(argv) < 2:
-    for cmd in inter.commands:
-      print_fmt(cmd)
+    cmds = inter.commands
+    width = max_width(cmds)
+
+    out = ""
+    for category in inter.get_command_categories():
+      print("    " + category)
+      for cmd in inter.get_commands_by_category(category):
+        print_fmt(cmd, width)
+      print()
   else:
     try:
-      print_fmt(inter.get_command(argv[1]))
+      cmd = inter.get_command(argv[1])
+      print_fmt(cmd, max_width([cmd]), fmt=inter.help_format_long)
     except KeyError:
       sys.stderr.write(inter.messages["command_not_found"].format(command=argv[1]))
       return 1
@@ -135,6 +160,7 @@ PromptType = TypeVar("PromptType", str, Callable)
 class CLI:
   """Command-line interface"""
 
+  # TODO: Properly use private variables
   def __init__(self, state: dict,
                prompt: PromptType="> ",
                case_insensitive: bool=True,
@@ -149,7 +175,18 @@ class CLI:
 
     self.commands = []
     self._command_maps = []
-    self.help_format = "{aliases} | {desc} | {name} {usage}"
+    self._command_categories = dict()
+
+    self.help_format_short = "{aliases:<{alias_width}}{desc}"
+    self.help_format_long = """\
+Category
+    {category}
+Description
+    {desc}
+Synopsis
+    {name} {usage}
+Aliases
+    {aliases}"""
 
     # Registes built-in commands
     self.builtin_cmd_ids = {
@@ -158,17 +195,20 @@ class CLI:
         aliases=["h", "help"],
         usage="[command]",
         description="Print this help message",
+        category="System",
       )),
       "quit": self.register_command(Command(
         function=default_cmd_quit,
         aliases=["q", "quit"],
         description="Quit the program",
+        category="System",
       )),
       "history": self.register_command(Command(
         function=default_cmd_history,
         aliases=["history"],
         usage="[count=15]",
         description="Print the command history",
+        category="System",
       )),
     }
 
@@ -186,6 +226,9 @@ class CLI:
       "history_invalid_count": "Non-integer count of entries supplied\n",
     }
 
+  def get_command_categories(self):
+    return self._command_categories.keys()
+
   def register_command(self, command: Command) -> int:
     """Add command to CLI and return its ID"""
 
@@ -197,6 +240,10 @@ class CLI:
         if alias in self._command_maps:
           raise KeyError(self.messages["command_overlapping_alias"].format(alias=alias))
 
+      if command.category not in self._command_categories:
+        self._command_categories[command.category] = 0
+      self._command_categories[command.category] += 1
+
       self.commands.append(command)
       return len(self.commands)-1
 
@@ -204,7 +251,16 @@ class CLI:
     """Remove a command from CLI"""
 
     if id < len(self.commands):
-      self.commands[id] = None
+      cmd = self.commands[id]
+      if cmd == None:
+        raise IndexError(self.messages["command_id_invalid"])
+      else:
+        if self._command_categories[cmd.category] == 1:
+          del self._command_categories[cmd.category]
+        else:
+          self._command_categories[cmd.category] -= 1
+
+        self.commands[id] = None
     else:
       raise IndexError(self.messages["id_out_of_range"])
 
@@ -220,6 +276,9 @@ class CLI:
       return self.commands[self._command_maps[alias]]
     else:
       raise KeyError(self.messages["command_not_found"].format(command=alias))
+
+  def get_commands_by_category(self, category: str) -> List[Command]:
+    return [ x for x in self.commands if x.category == category ]
 
   def get_prompt(self) -> str:
     """Return the current command prompt"""
@@ -245,6 +304,9 @@ class CLI:
             invisible_chars:List[str]=default_invisible_chars,
             ) -> str:
     """Input handler using self.getch"""
+
+    # TODO: Tab completion for command names
+    # TODO: Usable for user commands too, with tab completion (such as for labels), and support for different types
 
     import shutil
 
@@ -325,8 +387,6 @@ class CLI:
         elif stop == '\x04':
           if current_cmd == "":
             # Force quit command on ^D
-            # print(self._quit_aliases[0])
-            # current_cmd = self._quit_aliases[0]
             force_quit = True
             break
         elif stop == "\x1b[A":
