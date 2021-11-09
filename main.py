@@ -235,6 +235,14 @@ def main():
 
   print(header)
   inter.run()
+  
+  exit()
+  ch = ""
+  for _ in range(2):
+    ch += inter.getch()
+  
+  print()
+  print(ch.encode("unicode_escape"))
 
 if __name__ == '__main__':
   main()

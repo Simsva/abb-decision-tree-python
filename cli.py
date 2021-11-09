@@ -40,6 +40,13 @@ class _Getch:
         },
         '\x1b': '\x1b',
       },
+      '\xe0': {
+        'H': "\x1b[A",
+        'P': "\x1b[B",
+        'M': "\x1b[C",
+        'K': "\x1b[D",
+        'S': "\x1b[P",
+      },
     }
 
   def __call__(self):
@@ -86,7 +93,7 @@ class _GetchWindows:
 
   def __call__(self):
     import msvcrt
-    return msvcrt.getch()
+    return msvcrt.getwch()
 
 default_stop_chars = [
   '\x03',
