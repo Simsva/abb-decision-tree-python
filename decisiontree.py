@@ -127,6 +127,24 @@ def guess(data_point, node):
   else:
     return node
 
+# def guess_forest(data_point, forest):
+#   preds = dict()
+#   for tree in forest:
+#     g = guess(data_point, tree)
+#     for pred, certainty in g.items():
+#       if pred not in preds:
+#         preds[pred] = certainty
+#       else:
+#         preds[pred] += certainty
+
+#   return preds
+
+def verify_guess(label, data_point, guess):
+  guess = sorted(guess.items(), key=lambda x: x[1], reverse=True)[0][0]
+  # Convert both values to strings, in case tree is read from a JSON file
+  # which automatically converts keys to strings
+  return str(guess) == str(data_point[label])
+
 def guess_probability(guess):
   total = sum(guess.values())
   probs = dict()

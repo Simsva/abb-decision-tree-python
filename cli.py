@@ -40,6 +40,7 @@ class _Getch:
         },
         '\x1b': '\x1b',
       },
+      # Windows escape characters
       '\xe0': {
         'H': "\x1b[A",
         'P': "\x1b[B",
