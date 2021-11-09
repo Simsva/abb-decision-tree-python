@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os, sys
+import math
 import json
 import time
 
@@ -11,7 +12,7 @@ def parse_data(filename, offset=0, step=50):
   """Parse data in the format given by https://api.simsva.se/aidb/get_data/"""
 
   try:
-    with open("data.json", 'r') as f:
+    with open(filename, 'r') as f:
       data_raw = json.loads(f.read())
       # TODO: Interpolate co2
       return [ {
@@ -19,6 +20,8 @@ def parse_data(filename, offset=0, step=50):
         "time_interval": time.strptime(x["time"][:19], "%Y-%m-%d %H:%M:%S").tm_hour,
         "volume": int(x["volume"]),
         "light": int(x["light"]),
+        # 0.5 interval
+        "temp_interval": math.floor(float(x["temp"])*2)/2,
         "temp": float(x["temp"]),
         "humidity": float(x["humidity"]),
       } for x in data_raw[offset::step] ]
@@ -62,9 +65,50 @@ def yes_no(prompt, default=False):
       sys.stderr.write("Expected yes or no\n")
 
 # CLI commands
-def cmd_data_label(inter, state, argv):
+def cmd_label_set(inter, state, argv):
   # Set label
   state["label"] = input("label > ")
+  return 0
+
+def cmd_label_unique(inter, state, argv):
+  # Count unique label values in data
+  dr = get_input("data register", str, default='a')
+
+  if dr in state["data"]:
+    if state["label"] in state["data"][dr][0]:
+      # unique = set([ x[state["label"]] for x in state["data"][dr] ])
+      # unique = dict()
+      # for point in state["data"][dr]:
+      #   val = point[state["label"]]
+      #   if val in unique:
+      #     unique[val] += 1
+      #   else:
+      #     unique[val] = 1
+
+      unique = count_label(state["data"][dr], state["label"])
+      print('\n'.join([ f"{k}: {v}" for k,v in sorted(unique.items(), key=lambda x: x[0]) ]))
+    else:
+      sys.stderr.write("Label not in data\n")
+      return 1
+  else:
+    sys.stderr.write("No data in register\n")
+    return 1
+  return 0
+
+def cmd_label_count(inter, state, argv):
+  # Print amount of different unique labels
+  dr = get_input("data register", str, default='a')
+
+  if dr in state["data"]:
+    if state["label"] in state["data"][dr][0]:
+      unique = count_label(state["data"][dr], state["label"])
+      print("Count:", len(unique))
+    else:
+      sys.stderr.write("Label not in data\n")
+      return 1
+  else:
+    sys.stderr.write("No data in register\n")
+    return 1
   return 0
 
 def cmd_data_load(inter, state, argv):
@@ -125,7 +169,7 @@ def cmd_tree_save(inter, state, argv):
 
     try:
       with open(filename, 'w') as f:
-        f.write(json.dumps(state["tree"]))
+        f.write(json.dumps(state["tree"][r]))
         print("Done!")
     except IOError:
       sys.stderr.write("Error while writing file\n")
@@ -349,6 +393,24 @@ def main():
 
   commands = [
     {
+      "function": cmd_label_set,
+      "aliases": ["ls", "set_label"],
+      "description": "Set the label (field in data)",
+      "category": "Label",
+    },
+    {
+      "function": cmd_label_unique,
+      "aliases": ["lu", "label_unique"],
+      "description": "Get all unique label values",
+      "category": "Label",
+    },
+    {
+      "function": cmd_label_count,
+      "aliases": ["lc", "label_count"],
+      "description": "Count all unique label values",
+      "category": "Label",
+    },
+    {
       "function": cmd_data_load,
       "aliases": ["dl", "data_load"],
       "description": "Load data from a file",
@@ -358,12 +420,6 @@ def main():
       "function": cmd_data_print,
       "aliases": ["dp", "data_print"],
       "description": "Print the data",
-      "category": "Data",
-    },
-    {
-      "function": cmd_data_label,
-      "aliases": ["dL", "data_label"],
-      "description": "Set the label (field in data)",
       "category": "Data",
     },
     {
